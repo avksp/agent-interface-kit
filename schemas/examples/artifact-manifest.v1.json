@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "aik-artifact-manifest.v1",
+  "files": [
+    {
+      "path": "index.html",
+      "mediaType": "text/html",
+      "sha256": "44609f349360b326cbffd76564d831a5553f94ad1a78c91745f3edda8037314f"
+    }
+  ]
+}

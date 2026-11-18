@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+node tools/check-git-index.mjs
+
+stage=$(mktemp -d "${TMPDIR:-/tmp}/aik-index.XXXXXXXX")
+trap 'rm -rf "$stage"' EXIT
+trap 'exit 1' HUP INT TERM
+git checkout-index --all --prefix="$stage/"
+
+# A snapshot is independent of the parent repository and its index.
+unset $(git rev-parse --local-env-vars)
+cd "$stage"
+if ! npm ci --offline --ignore-scripts --no-audit --no-fund; then
+  printf '%s\n' "Install the staged lockfile's dependencies with npm ci and retry." >&2
+  exit 1
+fi
+npm run check

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-interface-kit:schema:artifact-manifest:v1",
+  "title": "AIK artifact manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "files"],
+  "properties": {
+    "schemaVersion": {
+      "const": "aik-artifact-manifest.v1"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "mediaType", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[^/\\\\:\\u0000-\\u001f\\u007f]+(?:/[^/\\\\:\\u0000-\\u001f\\u007f]+)*$",
+          "not": {
+            "anyOf": [
+              { "pattern": "(?:^|/)\\.{1,2}(?:/|$)" },
+              { "const": "artifact-manifest.json" }
+            ]
+          }
+        },
+        "mediaType": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$"
+        }
+      }
+    }
+  }
+}

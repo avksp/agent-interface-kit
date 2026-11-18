@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "aik-review-policy.v1",
+  "solutionReview": {
+    "beforeFreeze": true,
+    "role": "ars-review-solution"
+  },
+  "periodicAudit": {
+    "standardReleaseCount": 4,
+    "materialReleaseCount": 3,
+    "materialChange": "A public contract, compiler pipeline, or trust boundary changes across layers.",
+    "domains": ["architecture", "security", "engineering-practices", "performance"]
+  },
+  "subjects": {
+    "solution": "critical",
+    "architecture": "critical",
+    "security": "critical",
+    "complex-logic": "critical",
+    "engineering-practices": "standard",
+    "implementation": "standard",
+    "performance": "standard",
+    "simple": "simple"
+  },
+  "routes": {
+    "critical": [
+      { "adapter": "codex", "model": "gpt-6.2-astra", "effort": "high" }
+    ],
+    "standard": [
+      { "adapter": "qwen-code", "model": "qwen4-max", "effort": "high" },
+      { "adapter": "qwen-code", "model": "deepseek-v4-pro-0813", "effort": "high" },
+      { "adapter": "grok-build", "model": "grok-4.7", "effort": "high" },
+      { "adapter": "opencode", "model": "zai-coding-plan/glm-5.3", "effort": "max" }
+    ],
+    "simple": [
+      { "adapter": "opencode", "model": "zai-coding-plan/glm-5.3", "effort": "max" }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "code": "MISSING_ACTION",
+  "severity": "error",
+  "sourceRef": "figma:12:34",
+  "feature": "navigation"
+}

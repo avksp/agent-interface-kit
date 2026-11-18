@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-interface-kit:schema:review-policy:v1",
+  "title": "AIK review policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "solutionReview", "periodicAudit", "subjects", "routes"],
+  "properties": {
+    "schemaVersion": { "const": "aik-review-policy.v1" },
+    "solutionReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["beforeFreeze", "role"],
+      "properties": {
+        "beforeFreeze": { "const": true },
+        "role": { "const": "ars-review-solution" }
+      }
+    },
+    "periodicAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standardReleaseCount", "materialReleaseCount", "materialChange", "domains"],
+      "properties": {
+        "standardReleaseCount": { "const": 4 },
+        "materialReleaseCount": { "const": 3 },
+        "materialChange": { "type": "string", "minLength": 1 },
+        "domains": {
+          "const": ["architecture", "security", "engineering-practices", "performance"]
+        }
+      }
+    },
+    "subjects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["solution", "architecture", "security", "complex-logic", "engineering-practices", "implementation", "performance", "simple"],
+      "properties": {
+        "solution": { "const": "critical" },
+        "architecture": { "const": "critical" },
+        "security": { "const": "critical" },
+        "complex-logic": { "const": "critical" },
+        "engineering-practices": { "const": "standard" },
+        "implementation": { "const": "standard" },
+        "performance": { "const": "standard" },
+        "simple": { "const": "simple" }
+      }
+    },
+    "routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical", "standard", "simple"],
+      "properties": {
+        "critical": { "$ref": "#/$defs/route" },
+        "standard": { "$ref": "#/$defs/route" },
+        "simple": { "$ref": "#/$defs/route" }
+      }
+    }
+  },
+  "$defs": {
+    "route": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["adapter", "model", "effort"],
+        "properties": {
+          "adapter": { "enum": ["codex", "qwen-code", "grok-build", "opencode"] },
+          "model": { "type": "string", "minLength": 1 },
+          "effort": { "enum": ["high", "max"] }
+        }
+      }
+    }
+  }
+}

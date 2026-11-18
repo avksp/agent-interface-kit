@@ -1,0 +1,12 @@
+/tasks/
+/.alk/
+/node_modules/
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store

@@ -1,0 +1,37 @@
+{
+  "name": "agent-interface-kit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministic design-to-UI compiler toolkit for coding agents.",
+  "type": "module",
+  "packageManager": "npm@12.2.3",
+  "engines": {
+    "node": ">=26.13.1 <27"
+  },
+  "workspaces": [
+    "packages/*",
+    "integrations/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "check": "npm run typecheck && npm run lint && npm run guards && npm test",
+    "check:contracts": "node --test tests/contracts.test.mjs",
+    "lint": "oxlint --type-aware --deny-warnings --disable-nested-config --report-unused-disable-directives",
+    "guard:architecture": "node tools/check-imports.mjs architecture",
+    "guard:security": "node tools/check-imports.mjs security && node tools/check-git-index.mjs",
+    "guards": "node tools/check-imports.mjs && node tools/check-git-index.mjs",
+    "audit:deps": "npm audit --audit-level=high",
+    "hooks:install": "git config --local core.hooksPath .githooks",
+    "review:route": "node tools/review-route.mjs"
+  },
+  "devDependencies": {
+    "@swc/core": "1.16.22",
+    "@types/node": "26.6.6",
+    "ajv": "8.20.0",
+    "dependency-cruiser": "18.8.0",
+    "oxlint": "1.94.0",
+    "oxlint-tsgolint": "7.0.2007",
+    "typescript": "7.0.2"
+  }
+}
