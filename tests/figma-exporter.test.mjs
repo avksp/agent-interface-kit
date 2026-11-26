@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { crc32 } from "node:zlib";
+import { crc32, deflateSync } from "node:zlib";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { unzipSync } from "fflate";
 import { makeArchive } from "../integrations/figma-exporter/src/archive.ts";
@@ -177,10 +177,10 @@ void test("one owned selection yields the same canonical archive with linked PNG
   const fixture = host([trapped(frame([trapped(text()), trapped(rectangle())]))]);
   const result = await acquire(fixture);
   assert.equal(result.kind, "captured");
-  const zip = makeArchive(result, "Blue square");
+  const zip = await makeArchive(result, "Blue square");
   const repeated = await acquire(fixture, 2);
   assert.equal(repeated.kind, "captured");
-  assert.deepEqual(makeArchive(repeated, "Blue square"), zip);
+  assert.deepEqual(await makeArchive(repeated, "Blue square"), zip);
   const { files, children, rules } = readArchive(zip);
   const asset = "assets/" + createHash("sha256").update(blue).digest("hex") + ".png";
   assert.deepEqual(Object.keys(files), [asset, "overlay.json", "snapshot.json"]);
@@ -196,7 +196,7 @@ void test("horizontal no-image frames keep supported padding, paint and order", 
     layoutMode: "HORIZONTAL", fills: [color], paddingLeft: 12, paddingBottom: 3 };
   const response = await acquire(host([root]));
   assert.equal(response.kind, "captured");
-  const { assets, facts, rules, children, files } = readArchive(makeArchive(response, ""));
+  const { assets, facts, rules, children, files } = readArchive(await makeArchive(response, ""));
   assert.deepEqual(Object.keys(files), ["overlay.json", "snapshot.json"]);
   assert.deepEqual(rules, []);
   assert.deepEqual(assets, []);
@@ -291,7 +291,7 @@ void test("quota edges include hidden slots, Unicode escapes, alt and opaque ima
   assert.equal((await acquire(host([frame(Array.from({ length: limits.nodes }, () => hidden))]))).kind, "failed");
   const edge = await acquire(host([frame([text("\u0001".repeat(limits.text))])]));
   assert.equal(edge.kind, "captured");
-  assert.ok(makeArchive(edge, "").byteLength > limits.text * 6);
+  assert.ok((await makeArchive(edge, "")).byteLength > limits.text * 6);
   assert.equal((await acquire(host([frame([text("X".repeat(limits.text + 1))])]))).kind, "failed");
   for (const value of [limits.imageHash, limits.imageHash + 1]) {
     const picture = { ...rectangle(), fills: [{ ...imagePaint, imageHash: "x".repeat(value) }] };
@@ -337,7 +337,7 @@ class Anchor extends Control {
   removeAttribute() { this.href = ""; }
 }
 
-void test("packaged UI binds the submitted alt, rejects stale messages and revokes previous downloads", async () => {
+void test("packaged UI binds the submitted alt, rejects stale messages and revokes previous downloads", { timeout: 2000 }, async () => {
   const input = new Input();
   const button = new Button();
   const link = new Anchor();
@@ -349,6 +349,8 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   const blobs = [];
   /** @type {string[]} */
   const revoked = [];
+  /** @type {PromiseWithResolvers<void>} */
+  let saved = Promise.withResolvers();
   const parent = { postMessage: (/** @type {unknown} */ packet) => outbound.push(packet) };
   /** @type {(() => void) | undefined} */
   let expire;
@@ -357,9 +359,13 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   runInNewContext(uiScript, {
     parent, document: { querySelector: (/** @type {string} */ selector) => controls.get(selector) },
     HTMLAnchorElement: Anchor, HTMLElement: Control, HTMLInputElement: Input, HTMLButtonElement: Button,
-    Blob, TextEncoder, Uint8Array, ArrayBuffer,
+    Blob, TextEncoder, Uint8Array, ArrayBuffer, AbortController, ReadableStream, DecompressionStream,
     URL: {
-      createObjectURL: (/** @type {Blob} */ value) => "blob:" + blobs.push(value),
+      createObjectURL: (/** @type {Blob} */ value) => {
+        const url = "blob:" + blobs.push(value);
+        saved.resolve();
+        return url;
+      },
       revokeObjectURL: (/** @type {string} */ value) => revoked.push(value),
     },
     window: {
@@ -384,6 +390,8 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 3 } } });
   assert.ok(link.hidden);
   receive({ source: parent, data: { pluginMessage: receipt } });
+  receive({ source: parent, data: { pluginMessage: receipt } });
+  await saved.promise;
   assert.ok(!link.hidden);
   assert.equal(blobs.length, 1);
   assert.ok(blobs[0]);
@@ -412,7 +420,9 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   callbacks.get("pagehide")?.({});
   assert.equal(button.disabled, false);
   click({ isTrusted: true });
+  saved = Promise.withResolvers();
   receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 5 } } });
+  await saved.promise;
   assert.equal(input.value, "");
   click({ isTrusted: true });
   assert.equal(JSON.stringify(outbound[5]), '{"pluginMessage":{"kind":"capture","requestId":6,"alt":""}}');
@@ -439,12 +449,26 @@ void test("bridge copies exact PNG bytes and validates complete raster and docum
   const invalidData = Buffer.from(blue);
   invalidData[43] = (invalidData[43] ?? 0) ^ 2;
   for (const png of [blue.subarray(0, 33), Buffer.concat([blue, Buffer.from([0])]), withText, invalidData]) {
-    assert.throws(() => makeArchive({ ...receipt, image: { ...image, png } }, "Blue"), /supported PNG/u);
+    await assert.rejects(() => makeArchive({ ...receipt, image: { ...image, png } }, "Blue"), /supported PNG/u);
+  }
+  const compressedLength = blue.readUInt32BE(33);
+  const zlib = blue.subarray(41, 41 + compressedLength);
+  for (const payload of [
+    Buffer.concat([zlib.subarray(0, -4), Buffer.from("test"), zlib.subarray(-4)]),
+    deflateSync(new Uint8Array(16_384)),
+  ]) {
+    const idat = Buffer.alloc(payload.byteLength + 12);
+    idat.writeUInt32BE(payload.byteLength, 0);
+    idat.write("IDAT", 4);
+    payload.copy(idat, 8);
+    idat.writeUInt32BE(crc32(idat.subarray(4, -4)), idat.byteLength - 4);
+    const png = Buffer.concat([blue.subarray(0, 33), idat, blue.subarray(45 + compressedLength)]);
+    await assert.rejects(() => makeArchive({ ...receipt, image: { ...image, png } }, "Blue"), /supported PNG/u);
   }
   const wrongFacts = receipt.document.replace('"facts":{"height":1,"width":1}', '"facts":{"height":1,"width":2}');
   assert.notEqual(wrongFacts, receipt.document);
-  assert.throws(() => makeArchive({ ...receipt, document: wrongFacts }, "Blue"), /could not be completed/u);
-  assert.throws(() => makeArchive({
+  await assert.rejects(() => makeArchive({ ...receipt, document: wrongFacts }, "Blue"), /could not be completed/u);
+  await assert.rejects(() => makeArchive({
     ...receipt, document: '{"id":"1:1","kind":"frame","sourceRef":"1:1","children":[],"facts":{}}',
   }, "Blue"), /could not be completed/u);
 });

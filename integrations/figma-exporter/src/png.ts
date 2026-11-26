@@ -1,5 +1,4 @@
-import { unzlibSync } from "fflate";
-import { requireValue, validatePng } from "./contract.ts";
+import { ExportIssue, requireValue, validatePng } from "./contract.ts";
 
 const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -13,14 +12,49 @@ function crc(bytes: Uint8Array): number {
   return (state ^ 0xffff_ffff) >>> 0;
 }
 
-function adler(bytes: Uint8Array): number {
-  let low = 1;
-  let high = 0;
-  for (const byte of bytes) {
-    low = (low + byte) % 65521;
-    high = (high + low) % 65521;
+async function checkRows(
+  compressed: Uint8Array<ArrayBuffer>, stride: number, height: number, signal?: AbortSignal,
+): Promise<void> {
+  let offset = 0;
+  const input = new ReadableStream<Uint8Array<ArrayBuffer>>({
+    pull(controller) {
+      if (offset === compressed.byteLength) {
+        controller.close();
+        return;
+      }
+      // Bound each native transform even when a few compressed bytes produce a long run.
+      const next = Math.min(offset + 128, compressed.byteLength);
+      controller.enqueue(compressed.subarray(offset, next));
+      offset = next;
+    },
+  }, { highWaterMark: 0 });
+  const decoded = input.pipeThrough(new DecompressionStream("deflate"), signal ? { signal } : {});
+  const reader = decoded.getReader();
+  let received = 0;
+  let nextFilter = 0;
+  let done = false;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) {
+        done = true;
+        requireValue(received === stride * height, "IMAGE");
+        return;
+      }
+      const end = received + part.value.byteLength;
+      requireValue(end <= stride * height, "IMAGE");
+      while (nextFilter < end) {
+        requireValue((part.value[nextFilter - received] ?? 255) <= 4, "IMAGE");
+        nextFilter += stride;
+      }
+      received = end;
+    }
+  } catch {
+    throw new ExportIssue("IMAGE");
+  } finally {
+    if (!done) await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
-  return high * 65536 + low;
 }
 
 // This subset keeps only pixels and standard fixed-size color, transparency, and density fields.
@@ -32,7 +66,7 @@ const allowed = new Map<number, number>([
   [0x7452_4e53, 6], // tRNS for RGB
 ]);
 
-export function validateAsset(png: Uint8Array, width: number, height: number): void {
+export async function validateAsset(png: Uint8Array, width: number, height: number, signal?: AbortSignal): Promise<void> {
   validatePng(png, width, height);
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   const color = view.getUint8(25);
@@ -74,12 +108,5 @@ export function validateAsset(png: Uint8Array, width: number, height: number): v
     cursor += segment.byteLength;
   }
   const stride = width * (color === 2 ? 3 : 4) + 1;
-  const expected = stride * height;
-  // One additional byte lets a fixed-buffer decoder expose excessive output.
-  const pixels = unzlibSync(compressed, { out: new Uint8Array(expected + 1) });
-  const zlib = new DataView(compressed.buffer);
-  requireValue(pixels.byteLength === expected && adler(pixels) === zlib.getUint32(payloadLength - 4), "IMAGE");
-  for (let row = 0; row < height; row += 1) {
-    requireValue((pixels[row * stride] ?? 255) <= 4, "IMAGE");
-  }
+  await checkRows(compressed, stride, height, signal);
 }

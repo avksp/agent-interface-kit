@@ -97,7 +97,7 @@ function jsonFile(value: JsonObject): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-export function makeArchive(capture: Capture, alt: string): Uint8Array {
+export async function makeArchive(capture: Capture, alt: string, signal?: AbortSignal): Promise<Uint8Array> {
   const { image, document } = capture;
   requireValue(validString(document, limits.metadata) && utf8Length(document) <= limits.metadata, "LIMIT");
   const value: unknown = JSON.parse(document);
@@ -107,7 +107,7 @@ export function makeArchive(capture: Capture, alt: string): Uint8Array {
   const rules: JsonObject[] = [];
   if (image) {
     requireValue(validString(alt, limits.alt) && alt.trim() === alt && alt.length > 0, "ALT");
-    validateAsset(image.png, image.width, image.height);
+    await validateAsset(image.png, image.width, image.height, signal);
     const digest = bytesToHex(sha256(image.png));
     const path = "assets/" + digest + ".png";
     state.image = image;
