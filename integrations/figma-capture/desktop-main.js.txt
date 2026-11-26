@@ -1,0 +1,291 @@
+// The bundle generator prepends the validated invocation as a JSON literal.
+const { source, trees, parentChains, asset, link, paintBindings, getters, nonce, expiresAt } = invocation;
+const { limits } = getters;
+const statuses = new Set([
+  "WRONG_SCOPE", "SCOPE_CHANGED", "TIME_LIMIT", "CALL_LIMIT", "TREE_MISMATCH",
+  "PROJECTION_LIMIT", "DEPENDENCY_MISMATCH", "TEXT_LIMIT", "SEGMENT_LIMIT", "WIRE_LIMIT",
+]);
+let changed = false;
+let previousTime = Date.now();
+
+function requireCapture(condition, code) {
+  if (!condition) throw code;
+}
+
+function clock(start = previousTime) {
+  const now = Date.now();
+  requireCapture(Number.isSafeInteger(now) && now >= previousTime && now < expiresAt &&
+    now - start < getters.observationMs, "TIME_LIMIT");
+  requireCapture(!changed, "SCOPE_CHANGED");
+  previousTime = now;
+  return now;
+}
+
+function inScope() {
+  return figma.editorType === source.editor && figma.fileKey === source.fileKey &&
+    figma.currentPage.id === source.anchorId;
+}
+
+function utf8Size(text) {
+  let size = 0;
+  for (const point of text) {
+    const code = point.codePointAt(0);
+    size += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+  }
+  return size;
+}
+
+function observation(position) {
+  const start = clock();
+  const groups = Object.fromEntries(getters.groups.map((name) =>
+    [name, { calls: 0, durationMs: 0, maxMs: 0 }]));
+  const nodes = new Map();
+  const ancestorById = new Map();
+  let calls = 0;
+  let values = 0;
+  let segments = 0;
+
+  function begin(group) {
+    const at = clock(start);
+    requireCapture(++calls <= getters.callsPerObservation, "CALL_LIMIT");
+    groups[group].calls++;
+    return at;
+  }
+  function end(group, at) {
+    const elapsed = clock(start) - at;
+    requireCapture(elapsed < getters.getterMs, "TIME_LIMIT");
+    groups[group].durationMs += elapsed;
+    groups[group].maxMs = Math.max(groups[group].maxMs, elapsed);
+  }
+  function measure(group, getter) {
+    const at = begin(group);
+    const result = getter();
+    end(group, at);
+    return result;
+  }
+  async function waitFor(group, getter) {
+    const at = begin(group);
+    const result = await getter();
+    end(group, at);
+    requireCapture(inScope(), "SCOPE_CHANGED");
+    clock(start);
+    return result;
+  }
+
+  function project(value, depth = 0) {
+    requireCapture(depth <= limits.depth && ++values <= limits.projectedValues, "PROJECTION_LIMIT");
+    if (value === figma.mixed) return { kind: "FIGMA_MIXED" };
+    if (value === null || typeof value === "boolean") return value;
+    if (typeof value === "number") {
+      requireCapture(Number.isFinite(value), "PROJECTION_LIMIT");
+      return value;
+    }
+    if (typeof value === "string") {
+      requireCapture(value.length <= limits.stringUnits, "PROJECTION_LIMIT");
+      return value;
+    }
+    if (Array.isArray(value)) {
+      requireCapture(value.length <= limits.propertiesPerValue, "PROJECTION_LIMIT");
+      return Array.from({ length: value.length }, (_, index) => {
+        const item = Object.getOwnPropertyDescriptor(value, String(index));
+        requireCapture(item && Object.hasOwn(item, "value"), "PROJECTION_LIMIT");
+        return project(item.value, depth + 1);
+      });
+    }
+    requireCapture(typeof value === "object" &&
+      [null, Object.prototype].includes(Object.getPrototypeOf(value)), "PROJECTION_LIMIT");
+    const keys = Object.keys(value);
+    requireCapture(keys.length <= limits.propertiesPerValue, "PROJECTION_LIMIT");
+    const entries = [];
+    for (const key of keys) {
+      const property = Object.getOwnPropertyDescriptor(value, key);
+      requireCapture(key.length <= limits.keyUnits && property && Object.hasOwn(property, "value"),
+        "PROJECTION_LIMIT");
+      if (property.value !== undefined) entries.push([key, project(property.value, depth + 1)]);
+    }
+    return Object.fromEntries(entries);
+  }
+
+  function verifyTree(node, expected, parentId, parentKnown = false) {
+    requireCapture(node && measure("metadata", () => node.id) === expected.id &&
+      measure("metadata", () => node.type) === expected.type && !nodes.has(expected.id), "TREE_MISMATCH");
+    if (!parentKnown) {
+      const parent = measure("metadata", () => node.parent);
+      requireCapture(parent && measure("metadata", () => parent.id) === parentId, "TREE_MISMATCH");
+    }
+    const children = expected.type === "FRAME" ? measure("metadata", () => node.children) : [];
+    requireCapture(Array.isArray(children) && children.length === expected.children.length, "TREE_MISMATCH");
+    const record = { node, id: expected.id, parentId, type: expected.type };
+    nodes.set(record.id, record);
+    record.children = expected.children.map((child, index) => verifyTree(children[index], child, record.id));
+    return record;
+  }
+
+  async function root(letter) {
+    const tree = trees[letter];
+    requireCapture(tree.id === source.roots[letter], "TREE_MISMATCH");
+    const node = await waitFor("metadata", () => figma.getNodeByIdAsync(tree.id));
+    requireCapture(node, "TREE_MISMATCH");
+    let ancestor = node;
+    const chain = parentChains[letter];
+    for (const id of chain) {
+      ancestor = measure("metadata", () => ancestor.parent);
+      requireCapture(ancestor && measure("metadata", () => ancestor.id) === id, "TREE_MISMATCH");
+      ancestorById.set(id, ancestor);
+    }
+    requireCapture(chain.at(-1) === source.anchorId &&
+      measure("metadata", () => ancestor.type) === "PAGE", "TREE_MISMATCH");
+    return verifyTree(node, tree, chain[0], true);
+  }
+
+  function readFields(record) {
+    const { node, id, parentId, type } = record;
+    const text = type === "TEXT";
+    const facts = { id, parentId, type };
+    for (const key of [...getters.common, ...(text ? getters.text : [])]) {
+      if (!(key in node)) continue;
+      const value = measure("field", () => node[key]);
+      if (value === undefined) continue;
+      if (key === "name") requireCapture(typeof value === "string" && value.length <= 128, "PROJECTION_LIMIT");
+      if (["fills", "strokes", "effects", "reactions"].includes(key) && value !== figma.mixed) {
+        requireCapture(Array.isArray(value) && value.length <= limits.paintOrEffectSlots, "PROJECTION_LIMIT");
+      }
+      facts[key] = project(value);
+    }
+    requireCapture(typeof facts.name === "string", "PROJECTION_LIMIT");
+    if (text) {
+      const chars = measure("characters", () => node.characters);
+      requireCapture(typeof chars === "string" && chars.length <= limits.characters, "TEXT_LIMIT");
+      const styled = measure("segments", () => node.getStyledTextSegments(getters.styled, 0, chars.length));
+      requireCapture(Array.isArray(styled) && styled.length <= limits.segmentsPerText, "SEGMENT_LIMIT");
+      segments += styled.length;
+      requireCapture(segments <= limits.segmentsPerObservation, "SEGMENT_LIMIT");
+      facts.characters = chars;
+      facts.styledSegments = project(styled);
+    }
+    record.facts = facts;
+  }
+
+  async function readColor(expected, consumer, paint, variables, collections) {
+    const alias = paint?.boundVariables?.color;
+    requireCapture(paint?.type === "SOLID" && alias?.type === "VARIABLE_ALIAS" &&
+      alias.id === expected.alias, "DEPENDENCY_MISMATCH");
+
+    if (!variables.has(alias.id)) {
+      const variable = await waitFor("alias", () => figma.variables.getVariableByIdAsync(alias.id));
+      requireCapture(variable && measure("metadata", () => variable.id) === alias.id &&
+        measure("metadata", () => variable.remote) === false &&
+        measure("metadata", () => variable.resolvedType) === "COLOR", "DEPENDENCY_MISMATCH");
+      variables.set(alias.id, { variable, collectionId: measure("metadata", () => variable.variableCollectionId) });
+    }
+    const { variable, collectionId } = variables.get(alias.id);
+    requireCapture(collectionId === expected.collection, "DEPENDENCY_MISMATCH");
+    if (!collections.has(collectionId)) {
+      const collection = await waitFor("collection", () =>
+        figma.variables.getVariableCollectionByIdAsync(collectionId));
+      requireCapture(collection && measure("metadata", () => collection.id) === collectionId &&
+        measure("metadata", () => collection.remote) === false, "DEPENDENCY_MISMATCH");
+      collections.set(collectionId, measure("metadata", () => collection.defaultModeId));
+    }
+    const modes = measure("field", () => consumer.resolvedVariableModes);
+    const modeId = (modes === undefined ? undefined : project(modes)[collectionId]) ??
+      collections.get(collectionId);
+    requireCapture(modeId === expected.mode, "DEPENDENCY_MISMATCH");
+    const resolved = project(measure("resolve", () => variable.resolveForConsumer(consumer)));
+    requireCapture(resolved?.resolvedType === "COLOR" && ["r", "g", "b", "a"].every((key, index) =>
+      Math.abs(resolved.value?.[key] - expected.resolvedRgba[index]) <= 0.000001), "DEPENDENCY_MISMATCH");
+    return { nodeId: expected.consumer, field: expected.field, slot: expected.slot,
+      aliasId: alias.id, collectionId, modeId, paint, resolved };
+  }
+
+  function serialTree(record) {
+    return { ...record.facts, children: record.children.map(serialTree) };
+  }
+
+  async function collect() {
+    const onScope = () => measure("metadata", () => figma.editorType) === source.editor &&
+      measure("metadata", () => figma.fileKey) === source.fileKey &&
+      measure("metadata", () => figma.currentPage.id) === source.anchorId;
+    requireCapture(onScope(), "WRONG_SCOPE");
+    const a = await root("A");
+    const b = await root("B");
+    const backdrop = ancestorById.get(b.parentId);
+    requireCapture(backdrop && measure("metadata", () => backdrop.type) === "FRAME", "TREE_MISMATCH");
+    const apiVersion = measure("metadata", () => figma.apiVersion);
+    requireCapture(typeof apiVersion === "string" && apiVersion.length <= 32, "WRONG_SCOPE");
+    for (const record of nodes.values()) readFields(record);
+    const image = a.children.find((child) => child.id === asset.nodeId);
+    const imageFill = image?.facts.fills?.[asset.fillSlot];
+    const linkNode = a.children.find((child) => child.id === link.nodeId);
+    const target = a.children.find((child) => child.id === link.targetId);
+    const href = linkNode?.facts.styledSegments?.[0]?.hyperlink;
+    requireCapture(image?.type === "RECTANGLE" && imageFill?.type === "IMAGE" &&
+      imageFill.imageHash === asset.sourceImageId && linkNode?.type === "TEXT" &&
+      target?.type === "FRAME" && href?.type === "NODE" && href.value === target.id, "DEPENDENCY_MISMATCH");
+
+    const fills = measure("field", () => backdrop.fills);
+    requireCapture(Array.isArray(fills) && fills.length <= limits.paintOrEffectSlots, "PROJECTION_LIMIT");
+    const backing = { node: backdrop, facts: { fills: project(fills) } };
+    const dependencies = [];
+    const variables = new Map();
+    const collections = new Map();
+    for (const binding of paintBindings) {
+      const record = binding.consumer === b.parentId ? backing : nodes.get(binding.consumer);
+      requireCapture(record, "DEPENDENCY_MISMATCH");
+      const paint = record.facts[binding.field]?.[binding.slot];
+      dependencies.push(await readColor(binding, record.node, paint, variables, collections));
+    }
+    requireCapture(onScope(), "SCOPE_CHANGED");
+    const content = JSON.stringify({
+      probe: "aik.figma-closure.v1", fileKey: source.fileKey, apiVersion, anchorId: source.anchorId,
+      cases: { A: { root: serialTree(a), traversal: "SUBTREE" }, B: { root: serialTree(b), traversal: "SUBTREE" } },
+      dependencies, asset: { nodeId: asset.nodeId, fillSlot: asset.fillSlot, sourceImageId: asset.sourceImageId },
+    });
+    requireCapture(utf8Size(content) <= limits.observationBytes, "WIRE_LIMIT");
+    return { content, timing: { position, status: "PASS", elapsedMs: clock(start) - start, groups } };
+  }
+  return collect();
+}
+
+function invalidate() {
+  changed = true;
+  if (readyToSave) figma.closePlugin("AIK capture scope changed.");
+}
+
+let readyToSave = false;
+async function capture() {
+  let status = "PASS";
+  let wire = "";
+  try {
+    requireCapture(inScope(), "WRONG_SCOPE");
+    figma.on("currentpagechange", invalidate);
+    figma.currentPage.on("nodechange", invalidate);
+    const before = await observation(1);
+    clock();
+    requireCapture(inScope(), "SCOPE_CHANGED");
+    const after = await observation(2);
+    clock();
+    requireCapture(inScope(), "SCOPE_CHANGED");
+    requireCapture(before.content === after.content, "SCOPE_CHANGED");
+    const header = JSON.stringify({ version: 1, nonce, observations: [before.timing, after.timing] }) + "\n";
+    const envelope = JSON.stringify({ before: before.content, after: after.content }) + "\n";
+    wire = header + envelope;
+    requireCapture(utf8Size(header) <= limits.headerBytes && utf8Size(envelope) <= limits.envelopeBytes &&
+      utf8Size(wire) <= limits.sealedBytes, "WIRE_LIMIT");
+  } catch (error) {
+    status = statuses.has(error) ? error : "PLUGIN_ERROR";
+    wire = "";
+  }
+  const marker = "@AIK_DESKTOP_PAYLOAD@";
+  const island = JSON.stringify({ status, expiresAt, nonce, wire, maxBytes: limits.sealedBytes })
+    .replace(/[<>&\u2028\u2029]/gu, (character) =>
+      "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0"));
+  requireCapture(__html__.split(marker).length === 2, "WIRE_LIMIT");
+  const html = __html__.replace(marker, () => island);
+  requireCapture(utf8Size(html) <= limits.htmlBytes, "WIRE_LIMIT");
+  if (status === "PASS") clock();
+  readyToSave = status === "PASS";
+  figma.showUI(html, { title: "AIK Desktop Capture", width: 460, height: 190 });
+}
+
+void capture().catch(() => figma.closePlugin("AIK capture refused."));

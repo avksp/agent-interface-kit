@@ -1,0 +1,71 @@
+// Figma MCP Plugin API body. Prepend the JSON literal bound to `request`.
+if (figma.fileKey !== request.fileKey) throw new Error("SOURCE_CHANGED");
+let count = 0;
+const common = ["visible","x","y","width","height","relativeTransform","absoluteBoundingBox","rotation","opacity","blendMode","isMask","fills","strokes","strokeWeight","strokeAlign","effects","constraints","clipContent","cornerRadius","topLeftRadius","topRightRadius","bottomLeftRadius","bottomRightRadius","layoutPositioning","layoutSizingHorizontal","layoutSizingVertical","layoutGrow","layoutAlign","layoutMode","layoutWrap","primaryAxisSizingMode","counterAxisSizingMode","primaryAxisAlignItems","counterAxisAlignItems","counterAxisAlignContent","itemSpacing","counterAxisSpacing","paddingTop","paddingRight","paddingBottom","paddingLeft","clipsContent","minWidth","minHeight","maxWidth","maxHeight","boundVariables","reactions","fillStyleId","effectStyleId","strokeStyleId","textStyleId"];
+const textFields = ["fontName","fontSize","fills","letterSpacing","lineHeight","hyperlink","textDecoration","textCase"];
+const clean = value => value === figma.mixed ? {kind:"FIGMA_MIXED"} : value;
+function underAnchor(node) {
+  for (let p = node; p; p = p.parent) if (p.id === request.anchorId) return true;
+  return false;
+}
+async function inspect(node, includeChildren, depth = 0) {
+  if (depth > 12 || ++count > 32) throw new Error("Pilot traversal limit exceeded");
+  const fields = {};
+  for (const k of common) if (k in node && node[k] !== undefined) fields[k] = clean(node[k]);
+  if (node.type === "TEXT") {
+    for (const k of ["characters","textAlignHorizontal","textAlignVertical","textAutoResize","paragraphSpacing","paragraphIndent","hasMissingFont","textTruncation","maxLines"]) fields[k] = clean(node[k]);
+    fields.styledSegments = node.getStyledTextSegments(textFields);
+  }
+  if (node.type === "INSTANCE") {
+    fields.componentProperties = node.componentProperties;
+  }
+  observedNodes.add(node.id);
+  const children = [];
+  if (includeChildren && "children" in node) for (const child of node.children) children.push(await inspect(child, true, depth+1));
+  return {id:node.id, parentId:node.parent?.id ?? null,name:node.name,type:node.type,...fields,children};
+}
+const cases = {};
+const observedNodes = new Set();
+for (const [letter, id] of Object.entries(request.roots)) {
+  const node = await figma.getNodeByIdAsync(id);
+  if (!node || !underAnchor(node)) throw new Error("Case outside approved scope: " + letter);
+  cases[letter] = {root:await inspect(node, letter !== "N"), traversal:letter === "N" ? "ROOT_ONLY" : "SUBTREE"};
+}
+const header = {probe: "aik.figma-closure.v1", fileKey: figma.fileKey, apiVersion: figma.apiVersion,
+  anchorId: request.anchorId, cases};
+if (request.group === "n") return {...header, dependencies: [], asset: null};
+
+const children = cases.A.root.children;
+const imageNode = children.find(node => node.id === request.asset.nodeId);
+const image = imageNode?.fills?.[request.asset.fillSlot];
+const link = children.find(node => node.id === request.link.nodeId);
+const target = children.find(node => node.id === request.link.targetId);
+const href = link?.styledSegments?.[0]?.hyperlink;
+if (image?.type !== "IMAGE" || image.imageHash !== request.asset.sourceImageId) {
+  throw new Error("MISSING_DEPENDENCY " + request.asset.nodeId);
+}
+if (href?.type !== "NODE" || href.value !== target?.id || target?.type !== "FRAME") {
+  throw new Error("MISSING_DEPENDENCY " + request.link.nodeId);
+}
+
+const backdrop = await figma.getNodeByIdAsync(request.backdropId);
+if (backdrop?.type !== "FRAME" || !underAnchor(backdrop) || cases.B.root.parentId !== backdrop.id) {
+  throw new Error("MISSING_DEPENDENCY " + request.backdropId);
+}
+const dependencies = [];
+for (const [nodeId, field, slot] of request.paints) {
+  const consumer = await figma.getNodeByIdAsync(nodeId);
+  if (!consumer || !underAnchor(consumer) || (consumer.id !== backdrop.id && !observedNodes.has(consumer.id))) throw new Error("MISSING_DEPENDENCY " + nodeId);
+  const paint = consumer[field]?.[slot];
+  const alias = paint?.boundVariables?.color;
+  if (paint?.type !== "SOLID" || alias?.type !== "VARIABLE_ALIAS") throw new Error("MISSING_DEPENDENCY " + nodeId);
+  const variable = await figma.variables.getVariableByIdAsync(alias.id);
+  if (!variable || variable.remote) throw new Error("MISSING_DEPENDENCY " + nodeId);
+  const collection = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
+  if (!collection || collection.remote) throw new Error("MISSING_DEPENDENCY " + nodeId);
+  const resolved = variable.resolveForConsumer(consumer);
+  if (resolved.resolvedType !== "COLOR") throw new Error("MISSING_DEPENDENCY " + nodeId);
+  dependencies.push({nodeId,field,slot,aliasId:alias.id,collectionId:collection.id,modeId:consumer.resolvedVariableModes?.[collection.id] ?? collection.defaultModeId,paint,resolved});
+}
+return {...header, dependencies, asset: {nodeId: imageNode.id, fillSlot: request.asset.fillSlot,
+  sourceImageId: image.imageHash}};

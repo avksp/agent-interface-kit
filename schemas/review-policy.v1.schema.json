@@ -32,7 +32,7 @@
     "subjects": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["solution", "architecture", "security", "complex-logic", "engineering-practices", "implementation", "performance", "simple"],
+      "required": ["solution", "architecture", "security", "complex-logic", "engineering-practices", "implementation", "performance", "alk-plan", "alk-task", "simple"],
       "properties": {
         "solution": { "const": "critical" },
         "architecture": { "const": "critical" },
@@ -41,6 +41,8 @@
         "engineering-practices": { "const": "standard" },
         "implementation": { "const": "standard" },
         "performance": { "const": "standard" },
+        "alk-plan": { "const": "simple" },
+        "alk-task": { "const": "simple" },
         "simple": { "const": "simple" }
       }
     },
@@ -65,9 +67,9 @@
         "additionalProperties": false,
         "required": ["adapter", "model", "effort"],
         "properties": {
-          "adapter": { "enum": ["codex", "qwen-code", "grok-build", "opencode"] },
+          "adapter": { "enum": ["codex", "qwen-code", "grok-build", "opencode", "copilot"] },
           "model": { "type": "string", "minLength": 1 },
-          "effort": { "enum": ["high", "max"] }
+          "effort": { "enum": ["high", "xhigh", "max"] }
         }
       }
     }

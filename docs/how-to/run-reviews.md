@@ -6,16 +6,16 @@
 
 1. Classify the review by its risk. If architecture, security, or complex logic is in scope, use the critical route.
 2. Print the route with `npm run review:route -- architecture`. Replace `architecture` with the subject. The [policy](../../config/review-policy.json) defines the order, and its [schema](../../schemas/review-policy.v1.schema.json) checks the shape.
-3. Confirm the exact adapter, model, and reasoning effort on the current host before dispatch. Move to the next listed candidate only when the earlier route is unavailable before dispatch. Record the reason. A timeout or adverse finding remains in the review history.
+3. Before dispatch, confirm the exact adapter, model, and reasoning effort on the current host. You MUST move to the next listed candidate only if the earlier candidate is unavailable. Record the reason. A timeout or adverse finding remains in the review history.
 4. For ALK managed runs, use the approved local host binding with the same model and effort. The host binding needs its own support and qualification evidence. For ARS, record the same route in the caller assignment. The project policy selects candidates for both tools. Model launch and authorization use the tool's own workflow.
 
 | Review | Order |
 | --- | --- |
 | Solution, architecture, security, complex logic | Codex · `gpt-6.2-astra` · `high` |
-| Other audits | Qwen Code · `qwen4-max` · `high`, Qwen Code · `deepseek-v4-pro-0813` · `high`, Grok Build · `grok-4.7` · `high`, OpenCode · GLM 5.3 · `max` |
-| Simple analysis or audit | OpenCode · GLM 5.3 · `max` |
+| Other ARS audits | GitHub Copilot CLI · MAI Code 2 · `xhigh`, OpenCode · Z.AI Coding Plan · GLM 5.4 · `max` |
+| Routine ALK plan or task audit, simple analysis | OpenCode · Z.AI Coding Plan · GLM 5.4 · `max`, GitHub Copilot CLI · MAI Code 2 · `xhigh`, GitHub Copilot CLI · Gemini 4 Hydrogen · `high` |
 
-The OpenCode model selector is `zai-coding-plan/glm-5.3#max`. In Qwen, an advertised model with no verified `high` parameter is an unavailable exact route. Confirm the effective effort before trying the next one.
+Use `npm run review:route -- alk-plan` for routine plan audits and `npm run review:route -- alk-task` for routine task audits. The `copilot` adapter ID refers to GitHub Copilot CLI. Use model ID `zai-coding-plan/glm-5.4` with OpenCode variant `max`. In Copilot CLI, use `--model mai-code-2 --reasoning-effort xhigh` or `--model gemini-4-hydrogen --reasoning-effort high`. A candidate is unavailable if the host cannot confirm the required effort.
 
 ## Review a solution before freeze
 

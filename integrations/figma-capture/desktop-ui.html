@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
+<title>AIK Desktop Capture</title>
+<style>
+  body { margin: 20px; color: #18212d; background: #fff; font: 14px system-ui; }
+  h1 { font-size: 14px; margin: 0 0 10px; }
+  p { margin: 0 0 10px; }
+  #invocation { margin-top: 10px; }
+  a { display: inline-block; padding: 10px 14px; color: #174b8a; background: #eff4fc; }
+  [hidden] { display: none; }
+</style>
+<h1>AIK verified capture</h1>
+<p id="status" role="status">Checking the capture.</p>
+<a id="save" hidden>Save capture</a>
+<p id="invocation" hidden></p>
+<script id="capture" type="application/json">@AIK_DESKTOP_PAYLOAD@</script>
+<script>
+  "use strict";
+  const status = document.getElementById("status");
+  const save = document.getElementById("save");
+  try {
+    const payload = JSON.parse(document.getElementById("capture").textContent);
+    if (payload.status !== "PASS") {
+      status.textContent = "Capture refused (" + payload.status + ").";
+    } else {
+      const bytes = new TextEncoder().encode(payload.wire);
+      if (!/^[a-f0-9]{32}$/u.test(payload.nonce) || Date.now() >= payload.expiresAt ||
+          bytes.length === 0 || bytes.length > payload.maxBytes) throw new Error();
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/json" }));
+      save.href = url;
+      save.download = "aik-capture-" + payload.nonce + ".json";
+      let used = false;
+      function expire() {
+        save.hidden = true;
+        document.getElementById("invocation").hidden = true;
+        URL.revokeObjectURL(url);
+        if (!used) status.textContent = "Capture expired.";
+      }
+      save.addEventListener("click", (event) => {
+        if (used || !event.isTrusted || Date.now() >= payload.expiresAt) {
+          event.preventDefault();
+          return;
+        }
+        used = true;
+        status.textContent = "Save the file to the approved capture folder.";
+        setTimeout(() => { save.hidden = true; }, 0);
+      });
+      setTimeout(expire, Math.max(0, payload.expiresAt - Date.now()));
+      status.textContent = "Two observations matched. Save the capture.";
+      const marker = Array.from(payload.nonce.slice(0, 16), (hex) =>
+        "ABCDEFGHJKMNPQRT"[Number.parseInt(hex, 16)]).join("");
+      const invocation = document.getElementById("invocation");
+      invocation.textContent = "Capture ID " + marker.match(/.{4}/gu).join(" ");
+      invocation.hidden = false;
+      save.hidden = false;
+    }
+  } catch {
+    status.textContent = "Capture refused.";
+  }
+</script>
+</html>

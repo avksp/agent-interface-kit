@@ -18,6 +18,8 @@
     "engineering-practices": "standard",
     "implementation": "standard",
     "performance": "standard",
+    "alk-plan": "simple",
+    "alk-task": "simple",
     "simple": "simple"
   },
   "routes": {
@@ -25,13 +27,13 @@
       { "adapter": "codex", "model": "gpt-6.2-astra", "effort": "high" }
     ],
     "standard": [
-      { "adapter": "qwen-code", "model": "qwen4-max", "effort": "high" },
-      { "adapter": "qwen-code", "model": "deepseek-v4-pro-0813", "effort": "high" },
-      { "adapter": "grok-build", "model": "grok-4.7", "effort": "high" },
-      { "adapter": "opencode", "model": "zai-coding-plan/glm-5.3", "effort": "max" }
+      { "adapter": "copilot", "model": "mai-code-2", "effort": "xhigh" },
+      { "adapter": "opencode", "model": "zai-coding-plan/glm-5.4", "effort": "max" }
     ],
     "simple": [
-      { "adapter": "opencode", "model": "zai-coding-plan/glm-5.3", "effort": "max" }
+      { "adapter": "opencode", "model": "zai-coding-plan/glm-5.4", "effort": "max" },
+      { "adapter": "copilot", "model": "mai-code-2", "effort": "xhigh" },
+      { "adapter": "copilot", "model": "gemini-4-hydrogen", "effort": "high" }
     ]
   }
 }

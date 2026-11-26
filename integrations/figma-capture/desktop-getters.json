@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "aik.figma.desktop-getters.v1",
+  "observations": 2,
+  "observationMs": 18000,
+  "getterMs": 18000,
+  "callsPerObservation": 850,
+  "metadata": {
+    "editor": ["editorType", "fileKey", "apiVersion", "currentPage"],
+    "node": ["id", "type", "parent"],
+    "frame": ["children"],
+    "dependency": ["id", "remote", "resolvedType", "variableCollectionId", "defaultModeId"]
+  },
+  "common": [
+    "name", "visible", "x", "y", "width", "height", "relativeTransform", "absoluteBoundingBox",
+    "rotation", "opacity", "blendMode", "isMask", "fills", "strokes", "strokeWeight",
+    "strokeAlign", "effects", "constraints", "clipContent", "cornerRadius", "topLeftRadius",
+    "topRightRadius", "bottomLeftRadius", "bottomRightRadius", "layoutPositioning",
+    "layoutSizingHorizontal", "layoutSizingVertical", "layoutGrow", "layoutAlign", "layoutMode",
+    "layoutWrap", "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems",
+    "counterAxisAlignItems", "counterAxisAlignContent", "itemSpacing", "counterAxisSpacing",
+    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "clipsContent", "minWidth",
+    "minHeight", "maxWidth", "maxHeight", "boundVariables", "reactions", "fillStyleId",
+    "effectStyleId", "strokeStyleId", "textStyleId"
+  ],
+  "text": [
+    "textAlignHorizontal", "textAlignVertical", "textAutoResize", "paragraphSpacing",
+    "paragraphIndent", "hasMissingFont", "textTruncation", "maxLines"
+  ],
+  "styled": ["fontName", "fontSize", "fills", "letterSpacing", "lineHeight", "hyperlink", "textDecoration", "textCase"],
+  "groups": ["metadata", "field", "characters", "segments", "alias", "collection", "resolve"],
+  "limits": {
+    "characters": 512,
+    "segmentsPerText": 32,
+    "segmentsPerObservation": 96,
+    "propertiesPerValue": 32,
+    "depth": 6,
+    "projectedValues": 12000,
+    "stringUnits": 1024,
+    "keyUnits": 128,
+    "paintOrEffectSlots": 8,
+    "headerBytes": 1536,
+    "envelopeBytes": 162304,
+    "observationBytes": 65536,
+    "sealedBytes": 163840,
+    "htmlBytes": 1048576
+  }
+}

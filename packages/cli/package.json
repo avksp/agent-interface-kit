@@ -1,0 +1,15 @@
+{
+  "name": "@aik/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "aik": "./src/bin.ts"
+  },
+  "exports": {
+    ".": "./src/commands/index.ts"
+  },
+  "dependencies": {
+    "@aik/compile-core": "0.1.0"
+  }
+}

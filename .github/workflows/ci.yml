@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -20,6 +20,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.3
-      - run: npm ci
+      - run: test "$(node -p 'process.platform + "/" + process.arch')" = darwin/arm64
+      - run: npm ci --ignore-scripts
+      - run: npm run build:secure-fs
       - run: npm run check
       - run: npm run audit:deps

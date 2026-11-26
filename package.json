@@ -13,6 +13,7 @@
     "integrations/*"
   ],
   "scripts": {
+    "build:secure-fs": "sh packages/cli/native/darwin-arm64/build.sh",
     "typecheck": "tsc --noEmit",
     "test": "node --test",
     "check": "npm run typecheck && npm run lint && npm run guards && npm test",

@@ -85,11 +85,24 @@ void test("review routes preserve the approved model order and critical effort",
 
   const standard = spawnSync(process.execPath, [routeCommand, "engineering-practices"], { encoding: "utf8" });
   assert.equal(standard.status, 0, standard.stderr);
-  const models = Array.from(standard.stdout.matchAll(/"model": "([^"]+)"/g), (match) => match[1]);
-  assert.deepEqual(models, ["qwen4-max", "deepseek-v4-pro-0813", "grok-4.7", "zai-coding-plan/glm-5.3"]);
+  assert.deepEqual(JSON.parse(standard.stdout), {
+    subject: "engineering-practices",
+    route: "standard",
+    candidates: [
+      { adapter: "copilot", model: "mai-code-2", effort: "xhigh" },
+      { adapter: "opencode", model: "zai-coding-plan/glm-5.4", effort: "max" },
+    ],
+  });
 
-  const simple = spawnSync(process.execPath, [routeCommand, "simple"], { encoding: "utf8" });
-  assert.equal(simple.status, 0, simple.stderr);
-  assert.match(simple.stdout, /"model": "zai-coding-plan\/glm-5\.3",\s+"effort": "max"/);
+  const subscriptionCandidates = [
+    { adapter: "opencode", model: "zai-coding-plan/glm-5.4", effort: "max" },
+    { adapter: "copilot", model: "mai-code-2", effort: "xhigh" },
+    { adapter: "copilot", model: "gemini-4-hydrogen", effort: "high" },
+  ];
+  for (const subject of ["simple", "alk-plan", "alk-task"]) {
+    const result = spawnSync(process.execPath, [routeCommand, subject], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { subject, route: "simple", candidates: subscriptionCandidates });
+  }
   assert.equal(spawnSync(process.execPath, [routeCommand, "unknown-subject"]).status, 1);
 });

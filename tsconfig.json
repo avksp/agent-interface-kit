@@ -6,7 +6,9 @@
     "noEmit": true,
     "types": [
       "node"
-    ]
+    ],
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true
   },
   "include": [
     "packages/*/src/**/*",
