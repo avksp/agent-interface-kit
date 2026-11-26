@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { runInNewContext } from "node:vm";
+import { crc32 } from "node:zlib";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { unzipSync } from "fflate";
 import { makeArchive } from "../integrations/figma-exporter/src/archive.ts";
@@ -94,7 +95,7 @@ function host(selection) {
   /** @type {Response[]} */
   const replies = [];
   const ui = { onmessage: /** @type {(message: unknown) => void} */ (() => {}), postMessage: (/** @type {Response} */ value) => replies.push(value) };
-  runInNewContext(javascript, { __html__: html, figma: trapped({
+  runInNewContext(javascript, { __html__: html, Uint8Array, figma: trapped({
     get currentPage() { reads += 1; return page; },
     ui,
     showUI: (/** @type {string} */ markup) => assert.equal(markup, html),
@@ -117,7 +118,7 @@ function host(selection) {
 /** @param {ReturnType<typeof host>} fixture @param {number} requestId @param {string} alt */
 async function acquire(fixture, requestId = 1, alt = "Blue square") {
   const index = fixture.replies.length;
-  fixture.ui.onmessage({ kind: "capture", requestId, alt });
+  fixture.ui.onmessage({ kind: "capture", requestId, alt: alt.trim() ? "present" : "" });
   await new Promise((resolve) => setImmediate(resolve));
   const response = fixture.replies[index];
   assert.ok(response);
@@ -242,10 +243,10 @@ void test("an in-flight export latches delivered changes and rejects overlapping
         return new Promise((resolve) => { finish = () => resolve(blue); });
       });
       const fixture = host([frame([picture])]);
-      fixture.ui.onmessage({ kind: "capture", requestId: 1, alt: "Blue" });
+      fixture.ui.onmessage({ kind: "capture", requestId: 1, alt: "present" });
       await new Promise((resolve) => setImmediate(resolve));
       const before = fixture.reads();
-      fixture.ui.onmessage({ kind: "capture", requestId: 2, alt: "Blue" });
+      fixture.ui.onmessage({ kind: "capture", requestId: 2, alt: "present" });
       fixture.signal(event);
       fixture.signal(event);
       assert.ok(finish);
@@ -267,7 +268,7 @@ void test("projection detects crop mutation and child reorder with a stable imag
     const picture = rectangle(() => new Promise((resolve) => { finish = () => resolve(blue); }));
     const root = frame([text(), picture]);
     const fixture = host([root]);
-    fixture.ui.onmessage({ kind: "capture", requestId: 1, alt: "Blue" });
+    fixture.ui.onmessage({ kind: "capture", requestId: 1, alt: "present" });
     if (mutation === "crop") {
       Object.assign(picture, { fills: [{ ...imagePaint, imageTransform: [[1, 0, 0.2], [0, 1, 0]] }] });
     } else {
@@ -297,6 +298,11 @@ void test("quota edges include hidden slots, Unicode escapes, alt and opaque ima
     assert.equal((await acquire(host([frame([picture])]))).kind, value === limits.imageHash ? "captured" : "failed");
   }
   const fixture = host([frame()]);
+  const invalid = new Proxy({ kind: "invalid", requestId: 1, alt: "present" }, {
+    ownKeys() { throw new Error("Invalid messages must not be enumerated."); },
+  });
+  fixture.ui.onmessage(invalid);
+  fixture.ui.onmessage({ kind: "capture", requestId: 1, alt: "present", extra: true });
   fixture.ui.onmessage({ kind: "capture", requestId: 0, alt: "" });
   fixture.ui.onmessage({ kind: "capture", requestId: 1, alt: " ".repeat(limits.alt + 1) });
   assert.equal(fixture.reads(), 0);
@@ -337,23 +343,30 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   const link = new Anchor();
   const status = new Control();
   const controls = new Map([["#alt", input], ["#capture", button], ["#save", link], ["#status", status]]);
+  /** @type {unknown[]} */
   const outbound = [];
   /** @type {Blob[]} */
   const blobs = [];
   /** @type {string[]} */
   const revoked = [];
   const parent = { postMessage: (/** @type {unknown} */ packet) => outbound.push(packet) };
+  /** @type {(() => void) | undefined} */
+  let expire;
   /** @type {Map<string, (event: { source?: object; data?: object }) => void>} */
   const callbacks = new Map();
   runInNewContext(uiScript, {
     parent, document: { querySelector: (/** @type {string} */ selector) => controls.get(selector) },
     HTMLAnchorElement: Anchor, HTMLElement: Control, HTMLInputElement: Input, HTMLButtonElement: Button,
-    Blob, TextEncoder, Uint8Array,
+    Blob, TextEncoder, Uint8Array, ArrayBuffer,
     URL: {
       createObjectURL: (/** @type {Blob} */ value) => "blob:" + blobs.push(value),
       revokeObjectURL: (/** @type {string} */ value) => revoked.push(value),
     },
-    window: { addEventListener: (/** @type {string} */ event, /** @type {(event: object) => void} */ callback) => callbacks.set(event, callback) },
+    window: {
+      addEventListener: (/** @type {string} */ event, /** @type {(event: object) => void} */ callback) => callbacks.set(event, callback),
+      setTimeout: (/** @type {() => void} */ callback) => { expire = callback; return 1; },
+      clearTimeout: () => { expire = undefined; },
+    },
   });
   const receipt = await acquire(host([frame([rectangle()])]));
   assert.equal(receipt.kind, "captured");
@@ -365,6 +378,7 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   assert.equal(outbound.length, 0);
   click({ isTrusted: true });
   assert.equal(button.disabled, true);
+  assert.equal(JSON.stringify(outbound[0]), '{"pluginMessage":{"kind":"capture","requestId":1,"alt":"present"}}');
   input.value = "Changed input";
   receive({ source: {}, data: { pluginMessage: receipt } });
   receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 3 } } });
@@ -386,4 +400,51 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   assert.ok(link.hidden);
   assert.equal(button.disabled, false);
   assert.match(status.textContent, /Select one visible frame/u);
+  click({ isTrusted: true });
+  assert.ok(expire);
+  expire();
+  assert.equal(button.disabled, false);
+  assert.match(status.textContent, /timed out/u);
+  receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 3 } } });
+  assert.ok(link.hidden);
+  click({ isTrusted: true });
+  assert.equal(button.disabled, true);
+  callbacks.get("pagehide")?.({});
+  assert.equal(button.disabled, false);
+  click({ isTrusted: true });
+  receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 5 } } });
+  assert.equal(input.value, "");
+  click({ isTrusted: true });
+  assert.equal(JSON.stringify(outbound[5]), '{"pluginMessage":{"kind":"capture","requestId":6,"alt":""}}');
+});
+
+void test("bridge copies exact PNG bytes and validates complete raster and document facts", async () => {
+  const storage = new Uint8Array(blue.byteLength + 12).fill(0xaa);
+  storage.set(blue, 5);
+  const visible = storage.subarray(5, 5 + blue.byteLength);
+  const receipt = await acquire(host([frame([rectangle(async () => visible)])]));
+  assert.equal(receipt.kind, "captured");
+  const image = receipt.image;
+  assert.ok(image);
+  assert.equal(image.png.byteOffset, 0);
+  assert.equal(image.png.buffer.byteLength, blue.byteLength);
+  assert.deepEqual(Buffer.from(image.png), blue);
+
+  const metadata = Buffer.alloc(17);
+  metadata.writeUInt32BE(5);
+  metadata.write("tEXt", 4);
+  metadata.write("x\0abc", 8);
+  metadata.writeUInt32BE(crc32(metadata.subarray(4, 13)), 13);
+  const withText = Buffer.concat([blue.subarray(0, 33), metadata, blue.subarray(33)]);
+  const invalidData = Buffer.from(blue);
+  invalidData[43] = (invalidData[43] ?? 0) ^ 2;
+  for (const png of [blue.subarray(0, 33), Buffer.concat([blue, Buffer.from([0])]), withText, invalidData]) {
+    assert.throws(() => makeArchive({ ...receipt, image: { ...image, png } }, "Blue"), /supported PNG/u);
+  }
+  const wrongFacts = receipt.document.replace('"facts":{"height":1,"width":1}', '"facts":{"height":1,"width":2}');
+  assert.notEqual(wrongFacts, receipt.document);
+  assert.throws(() => makeArchive({ ...receipt, document: wrongFacts }, "Blue"), /could not be completed/u);
+  assert.throws(() => makeArchive({
+    ...receipt, document: '{"id":"1:1","kind":"frame","sourceRef":"1:1","children":[],"facts":{}}',
+  }, "Blue"), /could not be completed/u);
 });

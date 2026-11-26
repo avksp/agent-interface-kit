@@ -3,21 +3,66 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { zipSync } from "fflate";
 import type { JsonObject, JsonValue } from "../../../packages/compile-core/src/contracts.ts";
 import {
-  canonical, id, limits, record, requireValue, utf8Length, validString, validatePng,
+  canonical, id, limits, record, requireValue, utf8Length, validString,
 } from "./contract.ts";
 import type { Capture } from "./contract.ts";
+import { validateAsset } from "./png.ts";
 
-type ReadState = { remaining: number; text: number; seen: Set<string>; imageTarget?: string; assetPath?: string };
+type ReadState = { remaining: number; text: number; seen: Set<string>; image?: NonNullable<Capture["image"]>; assetPath?: string };
 
-function fact(value: unknown, depth: number): value is JsonValue {
-  if (value === null || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (typeof value === "string") return validString(value, limits.name);
-  if (depth === 0) return false;
-  if (Array.isArray(value)) return value.length === 1 && fact(value[0], depth - 1);
-  if (!record(value)) return false;
-  const keys = Object.keys(value);
-  return keys.length <= 20 && keys.every((key) => /^[a-zA-Z]{1,32}$/u.test(key) && fact(value[key], depth - 1));
+function between(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum;
+}
+
+function hasKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((key) =>
+    Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function solidFills(value: unknown): value is JsonValue {
+  if (!Array.isArray(value) || value.length !== 1) return false;
+  const paint: unknown = value[0];
+  if (!record(paint) || !hasKeys(paint, ["type", "color"]) || paint["type"] !== "SOLID") return false;
+  const color = paint["color"];
+  return record(color) && hasKeys(color, ["r", "g", "b"]) && ["r", "g", "b"].every((key) => between(color[key], 0, 1));
+}
+
+const spacing = ["itemSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft"] as const;
+const sizing = ["layoutSizingHorizontal", "layoutSizingVertical"] as const;
+const alignment = ["primaryAxisAlignItems", "counterAxisAlignItems"] as const;
+
+function frameFacts(facts: Record<string, unknown>): boolean {
+  const keys = ["width", "height", "name", "layoutMode", ...sizing, ...alignment, ...spacing];
+  if (facts["fills"] !== undefined) {
+    if (!solidFills(facts["fills"])) return false;
+    keys.push("fills");
+  }
+  return hasKeys(facts, keys) && validString(facts["name"], limits.name) &&
+    (facts["layoutMode"] === "HORIZONTAL" || facts["layoutMode"] === "VERTICAL") &&
+    sizing.every((key) => facts[key] === "FIXED" || facts[key] === "HUG") &&
+    alignment.every((key) => facts[key] === "MIN" || facts[key] === "CENTER" || facts[key] === "MAX") &&
+    spacing.every((key) => between(facts[key], 0, 4096));
+}
+
+function textFacts(facts: Record<string, unknown>): boolean {
+  const segments = facts["styledSegments"];
+  if (!hasKeys(facts, ["styledSegments"]) || !Array.isArray(segments) || segments.length !== 1) return false;
+  const segment: unknown = segments[0];
+  if (!record(segment) || !hasKeys(segment, ["fontName", "fontSize", "fills"])) return false;
+  const font = segment["fontName"];
+  return record(font) && hasKeys(font, ["family"]) && typeof font["family"] === "string" &&
+    /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,63}$/u.test(font["family"]) &&
+    between(segment["fontSize"], 1, 128) && solidFills(segment["fills"]);
+}
+
+function permittedFacts(facts: Record<string, unknown>, kind: string, image?: Capture["image"]): facts is JsonObject {
+  if (kind === "text") return textFacts(facts);
+  const { width, height } = facts;
+  if (!between(width, Number.MIN_VALUE, 4096) || !between(height, Number.MIN_VALUE, 4096)) return false;
+  if (kind === "frame") return frameFacts(facts);
+  if (image) return hasKeys(facts, ["width", "height"]) && width === image.width && height === image.height;
+  return hasKeys(facts, ["width", "height", ...sizing, "fills"]) &&
+    sizing.every((axis) => facts[axis] === "FIXED") && solidFills(facts["fills"]);
 }
 
 function readNode(value: unknown, depth: number, state: ReadState): JsonObject {
@@ -27,7 +72,7 @@ function readNode(value: unknown, depth: number, state: ReadState): JsonObject {
   requireValue(id(nodeId) && sourceRef === nodeId && !state.seen.has(nodeId) &&
     (kind === "frame" || kind === "text" || kind === "rectangle") && (depth !== 1 || kind === "frame") &&
     Array.isArray(children) && (kind === "frame" || children.length === 0) &&
-    record(facts) && fact(facts, 6), "CAPTURE");
+    record(facts), "CAPTURE");
   requireValue(children.length <= state.remaining, "LIMIT");
   state.seen.add(nodeId);
   if (kind === "text") {
@@ -36,13 +81,13 @@ function readNode(value: unknown, depth: number, state: ReadState): JsonObject {
   } else {
     requireValue(text === undefined, "CAPTURE");
   }
-  const isImage = state.imageTarget === nodeId;
-  requireValue(!isImage || (kind === "rectangle" && state.assetPath !== undefined), "CAPTURE");
+  const image = state.image?.nodeId === nodeId ? state.image : undefined;
+  requireValue((!image || kind === "rectangle") && permittedFacts(facts, kind, image), "CAPTURE");
   return {
     id: nodeId, kind, sourceRef, facts,
     children: children.map((child: unknown) => readNode(child, depth + 1, state)),
     ...(text === undefined ? {} : { text }),
-    ...(isImage && state.assetPath !== undefined ? { asset: state.assetPath } : {}),
+    ...(image && state.assetPath !== undefined ? { asset: state.assetPath } : {}),
   };
 }
 
@@ -62,10 +107,10 @@ export function makeArchive(capture: Capture, alt: string): Uint8Array {
   const rules: JsonObject[] = [];
   if (image) {
     requireValue(validString(alt, limits.alt) && alt.trim() === alt && alt.length > 0, "ALT");
-    validatePng(image.png, image.width, image.height);
+    validateAsset(image.png, image.width, image.height);
     const digest = bytesToHex(sha256(image.png));
     const path = "assets/" + digest + ".png";
-    state.imageTarget = image.nodeId;
+    state.image = image;
     state.assetPath = path;
     assets.push({ path, sha256: digest, mediaType: "image/png" });
     rules.push({ id: "image-alt", nodeId: image.nodeId, property: "image-alt", value: alt, precedence: 100 });

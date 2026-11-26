@@ -14,6 +14,14 @@ const status = required("#status", HTMLElement);
 let lastId = 0;
 let pending: { id: number; alt: string } | undefined;
 let url: string | undefined;
+let timer: number | undefined;
+
+function finishRequest(): void {
+  if (timer !== undefined) window.clearTimeout(timer);
+  timer = undefined;
+  pending = undefined;
+  capture.disabled = false;
+}
 
 function clearSave(): void {
   save.hidden = true;
@@ -32,7 +40,14 @@ capture.addEventListener("click", (event) => {
   pending = { id: ++lastId, alt: alt.value.trim() };
   capture.disabled = true;
   status.textContent = "Reading selection…";
-  parent.postMessage({ pluginMessage: { kind: "capture", requestId: pending.id, alt: alt.value } }, "*");
+  const id = pending.id;
+  timer = window.setTimeout(() => {
+    finishRequest();
+    clearSave();
+    status.textContent = messages.TIMEOUT;
+  }, 30_000);
+  // The Figma iframe has no fixed host origin across Desktop and web. The marker carries no user text.
+  parent.postMessage({ pluginMessage: { kind: "capture", requestId: id, alt: pending.alt ? "present" : "" } }, "*");
 });
 
 window.addEventListener("message", (event: MessageEvent<unknown>) => {
@@ -41,8 +56,7 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
   const value = result(event.data.pluginMessage, pending.id);
   if (value === undefined) return;
   const submitted = pending;
-  pending = undefined;
-  capture.disabled = false;
+  finishRequest();
   try {
     if (typeof value === "string") throw new ExportIssue(value);
     // Copy into an owned ArrayBuffer for the DOM Blob interface.
@@ -50,6 +64,7 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
     url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
     save.href = url;
     save.hidden = false;
+    if (value.image && alt.value.trim() === submitted.alt) alt.value = "";
     status.textContent = "Capture ready.";
   } catch (error: unknown) {
     clearSave();
@@ -61,6 +76,6 @@ save.addEventListener("click", (event) => {
   if (!event.isTrusted || save.hidden || !url) event.preventDefault();
 });
 window.addEventListener("pagehide", () => {
-  pending = undefined;
+  finishRequest();
   clearSave();
 });

@@ -39,7 +39,7 @@ async function capture(request: CaptureRequest, publish: (capture: Capture) => v
     validatePng(after, image.width, image.height);
     check();
     requireValue(after.byteLength === png.byteLength && png.every((byte, index) => byte === after[index]), "CHANGED");
-    publish({ document, image: { nodeId: image.node.id, width: image.width, height: image.height, png } });
+    publish({ document, image: { nodeId: image.node.id, width: image.width, height: image.height, png: new Uint8Array(png) } });
   } finally {
     figma.off("selectionchange", invalidate);
     figma.off("currentpagechange", invalidate);

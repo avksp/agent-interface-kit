@@ -31,6 +31,6 @@ aik compile --lock ./capture/build.lock.json --out ./site
 aik verify --manifest ./site/artifact-manifest.json
 ```
 
-The exporter supports horizontal and vertical Auto Layout, nested frames, text in one regular style, and rectangles with a solid fill. A frame MAY contain one image rectangle up to 512 by 512 pixels. Enter at most 200 UTF-16 code units of alt text. The plugin rejects unsupported visible layers and does not modify the design. If the selection changes during capture, select the frame and try again.
+The exporter supports horizontal and vertical Auto Layout, nested frames, text in one regular style, and rectangles with a solid fill. A frame MAY contain one image rectangle up to 512 by 512 pixels. Enter fresh alt text for each image capture, up to 200 UTF-16 code units. Turn off wrapping and clipping. Use plain fills and remove linked styles, variables, masks, effects, and strokes from the visible layers. The plugin rejects unsupported visible layers and does not modify the design. Figma can allocate a layer list or text value before the exporter applies its limits. If the selection changes during capture, select the frame and try again.
 
 [Lock a capture](lock-capture.md) · [Publish an AIK plugin](publish-figma-plugin.md)

@@ -21,6 +21,7 @@ export const messages = {
   CHANGED: "The selection changed. Select the frame and capture again.",
   IMAGE: "Figma did not return a supported PNG.",
   CAPTURE: "The capture could not be completed.",
+  TIMEOUT: "Capture timed out. Close and reopen the plugin if the editor is still busy.",
 } as const;
 
 export type IssueCode = keyof typeof messages;
@@ -58,12 +59,18 @@ function requestId(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 0x7fff_ffff;
 }
 
-export type CaptureRequest = { kind: "capture"; requestId: number; alt: string };
+export type CaptureRequest = { kind: "capture"; requestId: number; alt: "present" | "" };
 
 export function captureRequest(value: unknown): CaptureRequest | undefined {
-  if (!record(value) || Object.keys(value).length !== 3 || value["kind"] !== "capture" ||
-      !requestId(value["requestId"]) || !validString(value["alt"], limits.alt)) return undefined;
-  return { kind: "capture", requestId: value["requestId"], alt: value["alt"].trim() };
+  if (!record(value) || value["kind"] !== "capture" ||
+      !requestId(value["requestId"]) || (value["alt"] !== "present" && value["alt"] !== "")) return undefined;
+  let fields = 0;
+  for (const key in value) {
+    if (key !== "kind" && key !== "requestId" && key !== "alt") return undefined;
+    if (!Object.prototype.hasOwnProperty.call(value, key)) return undefined;
+    fields += 1;
+  }
+  return fields === 3 ? { kind: "capture", requestId: value["requestId"], alt: value["alt"] } : undefined;
 }
 
 export type Image = { nodeId: string; width: number; height: number; png: Uint8Array };
@@ -95,8 +102,10 @@ export function result(value: unknown, pending: number): Capture | IssueCode | u
   const image = value["image"];
   if (!record(image) || !id(image["nodeId"]) || !pngSide(image["width"]) || !pngSide(image["height"]) ||
       !(image["png"] instanceof Uint8Array)) return "IMAGE";
-  if (image["png"].byteLength > limits.png) return "LIMIT";
-  return { document, image: { nodeId: image["nodeId"], width: image["width"], height: image["height"], png: image["png"] } };
+  const png = image["png"];
+  if (png.byteLength > limits.png) return "LIMIT";
+  if (!(png.buffer instanceof ArrayBuffer) || png.byteOffset !== 0 || png.buffer.byteLength !== png.byteLength) return "IMAGE";
+  return { document, image: { nodeId: image["nodeId"], width: image["width"], height: image["height"], png } };
 }
 
 export function canonical(value: JsonValue): string {
