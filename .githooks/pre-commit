@@ -17,4 +17,5 @@ if ! npm ci --offline --ignore-scripts --no-audit --no-fund; then
   printf '%s\n' "Install the staged lockfile's dependencies with npm ci and retry." >&2
   exit 1
 fi
+npm run build:secure-fs
 npm run check
