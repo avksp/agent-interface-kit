@@ -30,9 +30,9 @@
     "@swc/core": "1.16.22",
     "@types/node": "26.6.6",
     "ajv": "8.20.0",
-    "dependency-cruiser": "18.8.0",
-    "oxlint": "1.94.0",
-    "oxlint-tsgolint": "7.0.2007",
+    "dependency-cruiser": "18.9.0",
+    "oxlint": "1.95.0",
+    "oxlint-tsgolint": "7.0.2008",
     "typescript": "7.0.2"
   }
 }
