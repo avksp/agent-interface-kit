@@ -56,7 +56,7 @@ function frameFacts(node: FrameNode): JsonObject {
     paddingTop, paddingRight, paddingBottom, paddingLeft, itemSpacing,
   } = node;
   requireValue((layoutMode === "HORIZONTAL" || layoutMode === "VERTICAL") && layoutWrap === "NO_WRAP" &&
-    !node.clipsContent && !node.strokesIncludedInLayout && !node.itemReverseZIndex && node.cornerRadius === 0 &&
+    !node.clipsContent && !node.itemReverseZIndex && node.cornerRadius === 0 &&
     (layoutSizingHorizontal === "FIXED" || layoutSizingHorizontal === "HUG") &&
     (layoutSizingVertical === "FIXED" || layoutSizingVertical === "HUG") &&
     (primaryAxisAlignItems === "MIN" || primaryAxisAlignItems === "CENTER" || primaryAxisAlignItems === "MAX") &&

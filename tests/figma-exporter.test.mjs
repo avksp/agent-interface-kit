@@ -53,7 +53,7 @@ function frame(children = []) {
   return {
     ...shared, type: "FRAME", id: "1:1", parent: { id: "0:1" }, name: "Synthetic export",
     width: 320, height: 100, children, layoutMode: "VERTICAL", layoutWrap: "NO_WRAP", clipsContent: false,
-    strokesIncludedInLayout: false, itemReverseZIndex: false, layoutSizingVertical: "HUG",
+    strokesIncludedInLayout: true, itemReverseZIndex: false, layoutSizingVertical: "HUG",
     primaryAxisAlignItems: "MIN", counterAxisAlignItems: "MIN", itemSpacing: 8, fills: [],
     paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0,
   };
@@ -351,10 +351,12 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   const revoked = [];
   /** @type {PromiseWithResolvers<void>} */
   let saved = Promise.withResolvers();
+  const figmaOrigin = "https://www.figma.com";
+  const hostWindow = {};
   const parent = { postMessage: (/** @type {unknown} */ packet) => outbound.push(packet) };
   /** @type {(() => void) | undefined} */
   let expire;
-  /** @type {Map<string, (event: { source?: object; data?: object }) => void>} */
+  /** @type {Map<string, (event: { source?: object; origin?: string; data?: object }) => void>} */
   const callbacks = new Map();
   runInNewContext(uiScript, {
     parent, document: { querySelector: (/** @type {string} */ selector) => controls.get(selector) },
@@ -369,6 +371,7 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
       revokeObjectURL: (/** @type {string} */ value) => revoked.push(value),
     },
     window: {
+      top: hostWindow,
       addEventListener: (/** @type {string} */ event, /** @type {(event: object) => void} */ callback) => callbacks.set(event, callback),
       setTimeout: (/** @type {() => void} */ callback) => { expire = callback; return 1; },
       clearTimeout: () => { expire = undefined; },
@@ -379,32 +382,35 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   const click = button.handlers.get("click");
   const receive = callbacks.get("message");
   assert.ok(click && receive);
-  input.value = "Original alt";
+  input.value = "Синий квадрат";
   click({ isTrusted: false });
   assert.equal(outbound.length, 0);
   click({ isTrusted: true });
   assert.equal(button.disabled, true);
   assert.equal(JSON.stringify(outbound[0]), '{"pluginMessage":{"kind":"capture","requestId":1,"alt":"present"}}');
   input.value = "Changed input";
-  receive({ source: {}, data: { pluginMessage: receipt } });
-  receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 3 } } });
+  receive({ source: {}, origin: figmaOrigin, data: { pluginMessage: receipt } });
+  receive({ source: parent, origin: figmaOrigin, data: { pluginMessage: receipt } });
+  receive({ source: hostWindow, origin: "https://example.com", data: { pluginMessage: receipt } });
+  receive({ source: hostWindow, origin: "null", data: { pluginMessage: receipt } });
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: { ...receipt, requestId: 3 } } });
   assert.ok(link.hidden);
-  receive({ source: parent, data: { pluginMessage: receipt } });
-  receive({ source: parent, data: { pluginMessage: receipt } });
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: receipt } });
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: receipt } });
   await saved.promise;
   assert.ok(!link.hidden);
   assert.equal(blobs.length, 1);
   assert.ok(blobs[0]);
   const { rules } = readArchive(new Uint8Array(await blobs[0].arrayBuffer()));
-  assert.equal(rules[0]?.["value"], "Original alt");
-  receive({ source: parent, data: { pluginMessage: receipt } });
+  assert.equal(rules[0]?.["value"], "Синий квадрат");
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: receipt } });
   assert.equal(blobs.length, 1);
   click({ isTrusted: true });
   assert.ok(link.hidden && link.href === "");
   assert.deepEqual(revoked, ["blob:1"]);
-  receive({ source: parent, data: { pluginMessage: receipt } });
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: receipt } });
   assert.ok(link.hidden);
-  receive({ source: parent, data: { pluginMessage: { kind: "failed", requestId: 2, code: "SELECTION" } } });
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: { kind: "failed", requestId: 2, code: "SELECTION" } } });
   assert.ok(link.hidden);
   assert.equal(button.disabled, false);
   assert.match(status.textContent, /Select one visible frame/u);
@@ -413,7 +419,7 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   expire();
   assert.equal(button.disabled, false);
   assert.match(status.textContent, /timed out/u);
-  receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 3 } } });
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: { ...receipt, requestId: 3 } } });
   assert.ok(link.hidden);
   click({ isTrusted: true });
   assert.equal(button.disabled, true);
@@ -421,7 +427,7 @@ void test("packaged UI binds the submitted alt, rejects stale messages and revok
   assert.equal(button.disabled, false);
   click({ isTrusted: true });
   saved = Promise.withResolvers();
-  receive({ source: parent, data: { pluginMessage: { ...receipt, requestId: 5 } } });
+  receive({ source: hostWindow, origin: figmaOrigin, data: { pluginMessage: { ...receipt, requestId: 5 } } });
   await saved.promise;
   assert.equal(input.value, "");
   click({ isTrusted: true });

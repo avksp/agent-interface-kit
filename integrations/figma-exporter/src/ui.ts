@@ -75,7 +75,10 @@ async function assemble(value: Capture | IssueCode, submitted: Pending): Promise
 }
 
 window.addEventListener("message", (event: MessageEvent<unknown>) => {
-  if (event.source !== parent || !pending || pending.received || event.data === null || typeof event.data !== "object" ||
+  // Desktop delivers plugin replies from Figma's top window through a nested UI frame.
+  const host = window.top;
+  if (!host || event.source !== host || event.origin !== "https://www.figma.com" ||
+      !pending || pending.received || event.data === null || typeof event.data !== "object" ||
       !("pluginMessage" in event.data)) return;
   const value = result(event.data.pluginMessage, pending.id);
   if (value === undefined) return;
