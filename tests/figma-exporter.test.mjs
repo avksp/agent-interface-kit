@@ -62,7 +62,7 @@ function frame(children = []) {
 /** @param {string} characters */
 function text(characters = "Public  Figma 🌻") {
   return {
-    ...shared, type: "TEXT", id: "1:2", name: "One run", characters,
+    ...shared, type: "TEXT", blendMode: "PASS_THROUGH", id: "1:2", name: "One run", characters,
     fontName: { family: "Inter", style: "Regular" }, fontSize: 16, hasMissingFont: false,
     letterSpacing: { unit: "PIXELS", value: 0 }, lineHeight: { unit: "AUTO" },
     textStyleId: "", textDecoration: "NONE", textCase: "ORIGINAL", hyperlink: null,
@@ -74,7 +74,7 @@ function text(characters = "Public  Figma 🌻") {
 
 /** @param {() => Promise<Uint8Array>} exportAsync */
 function rectangle(exportAsync = async () => blue) {
-  return { ...shared, type: "RECTANGLE", id: "1:3", name: "Photo", fills: [imagePaint], exportAsync };
+  return { ...shared, type: "RECTANGLE", blendMode: "PASS_THROUGH", id: "1:3", name: "Photo", fills: [imagePaint], exportAsync };
 }
 
 /** @template {object} T @param {T} object */
@@ -220,6 +220,7 @@ void test("invalid selection, unsupported facts and multiple images cause no ras
     frame([picture, { ...picture, id: "1:5" }]),
     frame([text(), { ...text(), characters: "Duplicate" }]),
     frame([{ ...picture, strokes: [color] }]),
+    frame([{ ...picture, blendMode: "MULTIPLY" }]),
     frame([{ ...text(), fontSize: Symbol("mixed") }]),
     frame([{ ...picture, boundVariables: { fills: ["var"] } }]),
   ]) {
@@ -477,4 +478,36 @@ void test("bridge copies exact PNG bytes and validates complete raster and docum
   await assert.rejects(() => makeArchive({
     ...receipt, document: '{"id":"1:1","kind":"frame","sourceRef":"1:1","children":[],"facts":{}}',
   }, "Blue"), /could not be completed/u);
+});
+
+void test("the exact Figma software marker is stripped after both raw observations match", async () => {
+  const marker = Buffer.from("Software\0Figma", "ascii");
+  const textChunk = Buffer.alloc(marker.byteLength + 12);
+  textChunk.writeUInt32BE(marker.byteLength);
+  textChunk.write("tEXt", 4);
+  marker.copy(textChunk, 8);
+  textChunk.writeUInt32BE(crc32(textChunk.subarray(4, -4)), textChunk.byteLength - 4);
+  const prefix = blue.subarray(0, 33);
+  const remainder = blue.subarray(33);
+  const marked = Buffer.concat([prefix, textChunk, remainder]);
+  const original = await acquire(host([frame([rectangle()])]));
+  const matching = await acquire(host([frame([rectangle(async () => marked)])]));
+  assert.equal(original.kind, "captured");
+  assert.equal(matching.kind, "captured");
+  assert.deepEqual(await makeArchive(matching, "Blue"), await makeArchive(original, "Blue"));
+  let calls = 0;
+  const changed = await acquire(host([frame([rectangle(async () => calls++ === 0 ? blue : marked)])]));
+  assert.equal(changed.kind, "failed");
+  assert.equal(changed.code, "CHANGED");
+  const wrongCrc = Buffer.from(textChunk);
+  wrongCrc[wrongCrc.byteLength - 1] = (wrongCrc[wrongCrc.byteLength - 1] ?? 0) ^ 1;
+  const image = original.image;
+  assert.ok(image);
+  for (const png of [
+    Buffer.concat([prefix, textChunk, textChunk, remainder]),
+    Buffer.concat([prefix, wrongCrc, remainder]),
+    Buffer.concat([blue.subarray(0, -12), textChunk, blue.subarray(-12)]),
+  ]) {
+    await assert.rejects(() => makeArchive({ ...original, image: { ...image, png } }, "Blue"), /supported PNG/u);
+  }
 });

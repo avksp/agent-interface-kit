@@ -66,7 +66,11 @@ const allowed = new Map<number, number>([
   [0x7452_4e53, 6], // tRNS for RGB
 ]);
 
-export async function validateAsset(png: Uint8Array, width: number, height: number, signal?: AbortSignal): Promise<void> {
+const softwareMarker = new TextEncoder().encode("Software\0Figma");
+
+export async function normalizeAsset(
+  png: Uint8Array, width: number, height: number, signal?: AbortSignal,
+): Promise<Uint8Array> {
   validatePng(png, width, height);
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   const color = view.getUint8(25);
@@ -77,7 +81,9 @@ export async function validateAsset(png: Uint8Array, width: number, height: numb
   let payloadLength = 0;
   let end = false;
   let offset = 8;
+  let removable: { start: number; end: number } | undefined;
   for (let count = 0; offset + 12 <= png.byteLength && count < 1024; count += 1) {
+    const chunkStart = offset;
     const byteCount = view.getUint32(offset);
     const type = view.getUint32(offset + 4);
     const start = offset + 8;
@@ -96,6 +102,12 @@ export async function validateAsset(png: Uint8Array, width: number, height: numb
       segments.push(png.subarray(start, next));
       continue;
     }
+    if (type === 0x7445_5874) { // tEXt
+      requireValue(segments.length === 0 && !removable && byteCount === softwareMarker.byteLength &&
+        softwareMarker.every((byte, index) => png[start + index] === byte), "IMAGE");
+      removable = { start: chunkStart, end: offset };
+      continue;
+    }
     requireValue(segments.length === 0 && allowed.get(type) === byteCount && !seen.has(type) &&
       (type !== 0x7452_4e53 || color === 2), "IMAGE");
     seen.add(type);
@@ -109,4 +121,9 @@ export async function validateAsset(png: Uint8Array, width: number, height: numb
   }
   const stride = width * (color === 2 ? 3 : 4) + 1;
   await checkRows(compressed, stride, height, signal);
+  if (!removable) return png;
+  const normalized = new Uint8Array(png.byteLength - (removable.end - removable.start));
+  normalized.set(png.subarray(0, removable.start));
+  normalized.set(png.subarray(removable.end), removable.start);
+  return normalized;
 }

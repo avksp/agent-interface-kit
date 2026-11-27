@@ -24,7 +24,7 @@ function bounds(node: Supported): JsonObject {
 
 function common(node: Supported, depth: number): void {
   requireValue(node.opacity === 1 && node.rotation === 0 && !node.isMask &&
-    (node.blendMode === "NORMAL" || (node.type === "FRAME" && node.blendMode === "PASS_THROUGH")) &&
+    (node.blendMode === "NORMAL" || node.blendMode === "PASS_THROUGH") &&
     node.effects.length === 0 && node.strokes.length === 0 && node.reactions.length === 0 &&
     node.effectStyleId === "" && node.fillStyleId === "" && node.strokeStyleId === "" &&
     noBindings(node.boundVariables) && node.minWidth === null && node.minHeight === null &&

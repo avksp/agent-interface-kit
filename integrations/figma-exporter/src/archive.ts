@@ -6,7 +6,7 @@ import {
   canonical, id, limits, record, requireValue, utf8Length, validString,
 } from "./contract.ts";
 import type { Capture } from "./contract.ts";
-import { validateAsset } from "./png.ts";
+import { normalizeAsset } from "./png.ts";
 
 type ReadState = { remaining: number; text: number; seen: Set<string>; image?: NonNullable<Capture["image"]>; assetPath?: string };
 
@@ -107,14 +107,14 @@ export async function makeArchive(capture: Capture, alt: string, signal?: AbortS
   const rules: JsonObject[] = [];
   if (image) {
     requireValue(validString(alt, limits.alt) && alt.trim() === alt && alt.length > 0, "ALT");
-    await validateAsset(image.png, image.width, image.height, signal);
-    const digest = bytesToHex(sha256(image.png));
+    const png = await normalizeAsset(image.png, image.width, image.height, signal);
+    const digest = bytesToHex(sha256(png));
     const path = "assets/" + digest + ".png";
     state.image = image;
     state.assetPath = path;
     assets.push({ path, sha256: digest, mediaType: "image/png" });
     rules.push({ id: "image-alt", nodeId: image.nodeId, property: "image-alt", value: alt, precedence: 100 });
-    files[path] = image.png;
+    files[path] = png;
   }
   const root = readNode(value, 1, state);
   requireValue(!image || state.seen.has(image.nodeId), "CAPTURE");
