@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "build:secure-fs": "sh packages/cli/native/darwin-arm64/build.sh",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace @aik/figma-exporter",
     "test": "node --test",
     "check": "npm run typecheck && npm run lint && npm run guards && npm test",
     "check:contracts": "node --test tests/contracts.test.mjs",
